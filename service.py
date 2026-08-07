@@ -1,5 +1,37 @@
+from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
 from models import Product, Order, OrderItem
+
+ELECTRONICS_SURCHARGE_RATE = 0.1
+
+
+class InvoiceFormatter(ABC):
+    @abstractmethod
+    def format(self, order: Order) -> object:
+        ...
+
+
+class TextInvoiceFormatter(InvoiceFormatter):
+    def format(self, order: Order) -> str:
+        return f"Order {order.order_id}: ${order.total_amount}"
+
+
+class CsvInvoiceFormatter(InvoiceFormatter):
+    def format(self, order: Order) -> str:
+        return f"id,total\n{order.order_id},{order.total_amount}"
+
+
+class JsonInvoiceFormatter(InvoiceFormatter):
+    def format(self, order: Order) -> dict:
+        return {"id": order.order_id, "amount": order.total_amount}
+
+
+INVOICE_FORMATTERS: Dict[str, InvoiceFormatter] = {
+    "TEXT": TextInvoiceFormatter(),
+    "CSV": CsvInvoiceFormatter(),
+    "JSON": JsonInvoiceFormatter(),
+}
+
 
 class WarehouseService:
     def __init__(self):
@@ -33,32 +65,30 @@ class WarehouseService:
         return new_order
 
     def calculate_order_totals(self, order: Order):
-        a = 0
-        for i in order.items:
-            p = self.inventory.get(i.sku)
-            if p: a += p.price * i.quantity
-        b = 0
-        for i in order.items:
-            p = self.inventory.get(i.sku)
-            if p and p.category == "Electronics": b += (p.price * i.quantity) * 0.1
-        order.total_amount = a + b
+        subtotal = 0.0
+        surcharge = 0.0
+        for item in order.items:
+            product = self.inventory.get(item.sku)
+            if product is None:
+                continue
+            line_total = product.price * item.quantity
+            subtotal += line_total
+            if product.category == "Electronics":
+                surcharge += line_total * ELECTRONICS_SURCHARGE_RATE
+        order.total_amount = subtotal + surcharge
         return order
 
     def generate_invoice(self, order_id: str, fmt: str):
         order = next((o for o in self.orders if o.order_id == order_id), None)
-        if fmt == "TEXT": return f"Order {order.order_id}: ${order.total_amount}"
-        elif fmt == "CSV": return f"id,total\n{order.order_id},{order.total_amount}"
-        elif fmt == "JSON": return {"id": order.order_id, "amount": order.total_amount}
-        return None
+        if order is None:
+            return None
+        formatter = INVOICE_FORMATTERS.get(fmt)
+        if formatter is None:
+            return None
+        return formatter.format(order)
 
-    def validate_shipping(self, order: Order, country: str, weight: float):
-        if order is not None:
-            if order.status == "pending":
-                if country == "US":
-                    if weight < 50: return True
-                    else: return False
-                else:
-                    if weight < 20: return True
-                    else: return False
-            else: return False
-        else: return False
+    def validate_shipping(self, order: Order, country: str, weight: float) -> bool:
+        if order is None or order.status != "pending":
+            return False
+        max_weight = 50 if country == "US" else 20
+        return weight < max_weight
