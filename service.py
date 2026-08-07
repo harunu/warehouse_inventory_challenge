@@ -10,21 +10,24 @@ class WarehouseService:
         self.inventory[product.sku] = product
 
     def search_products(self, query: str) -> List[Product]:
-        """BUG: Case-sensitive and lacks partial matching."""
+        query_lower = query.lower()
         results = []
         for p in self.inventory.values():
-            if query in p.name: 
+            if query_lower in p.name.lower():
                 results.append(p)
         return results
 
     def process_order(self, order_id: str, items: List[OrderItem]) -> Optional[Order]:
-        """BUG: No SKU validation and non-atomic stock deduction."""
         total = 0.0
         for item in items:
             product = self.inventory.get(item.sku)
+            if product is None or product.stock_quantity < item.quantity:
+                return None
             total += product.price * item.quantity
-            product.stock_quantity -= item.quantity 
-        
+
+        for item in items:
+            self.inventory[item.sku].stock_quantity -= item.quantity
+
         new_order = Order(order_id=order_id, items=items, total_amount=total)
         self.orders.append(new_order)
         return new_order
